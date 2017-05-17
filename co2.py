@@ -322,7 +322,7 @@ class Driver:
         if take <= 2:
             return True
 
-    # mandatory on not
+    # mandatory or not
     def add_passenger_aux(self, passenger):
         added = False
         if not self.travel:
@@ -435,7 +435,7 @@ class Driver:
 # print()
 # print()
 
-state = State(n=10, m=5)
+state = State(n=100, m=50)
 state.generate_random_problem()
 
 # print(state.global_distance())
@@ -473,11 +473,23 @@ while state.remaining_passengers:
     if not cont:
         print("hhhhhhhhhheeeeeeeeyyyyyyy")
 
-while state.remaining_drivers:
+cont = True
+while len(state.remaining_drivers) > 1 and cont:
     print('add driver')
     state.add_best_driver_as_passenger()
     dist = state.global_distance()
     cont = old_dist > dist
+    old_dist = dist
+    print("global distance: ")
+    print(dist)
+
+cont = True
+while cont:
+    print('swap')
+    state.best_swap()
+    dist = state.global_distance()
+    cont = old_dist > dist
+    old_dist = dist
     print("global distance: ")
     print(dist)
 
