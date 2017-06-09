@@ -30,12 +30,15 @@ class CO2(search.Problem):
         return state.is_final_state()
 
     def result(self, state, action):
+        act, old_driver, old_passenger = action
         cstate = copy.deepcopy(state)
-        if action == "swap":
-            cstate.best_swap()
-        else:
-            if action == "add":
-                cstate.add_best_passenger()
+
+        driver = cstate.get_user(old_driver['id'])
+        passenger =  cstate.get_user(old_passenger['id'])
+        if act == 'add':
+            driver.add_passenger(passenger)
+
+
         return cstate
 
     def value(self, state):
@@ -43,7 +46,11 @@ class CO2(search.Problem):
         return state.N * 30 - state.global_distance()
 
     def actions(self, state):
-        return ['swap', 'add']
+        actions = []
+        for d, p in product(state.drivers, state.remaining_passengers):
+            actions.append(['add',d,p])
+
+        return actions
 
 
 class State:
@@ -81,6 +88,9 @@ class State:
                 self.drivers.append(Driver(self.users[i]))
         self.remaining_passengers = list(self.passengers)
         self.remaining_drivers = list(self.drivers)
+
+    def get_user(self, pos):
+        return self.users[pos]
 
     def is_final_state(self):
         return not self.remaining_passengers
