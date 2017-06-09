@@ -5,15 +5,6 @@ import sys
 from itertools import product
 import copy
 
-"""
-user = {'id': 1, 'origin': [1, 2], 'destination': [2, 3]}
-
-travel=[]
-driver = {'user': user, 'travel': travel}
-
-passenger = {'user':user, 'driver':user}
-"""
-
 
 def manhattan_distance(origin, destination):
     return abs(origin[0]-destination[0]) + abs(origin[1]-destination[1])
@@ -30,26 +21,59 @@ class CO2(search.Problem):
         return state.is_final_state()
 
     def result(self, state, action):
-        act, old_driver, old_passenger = action
-        cstate = copy.deepcopy(state)
+        act = action[0]
+        new_state = copy.deepcopy(state)
 
-        driver = cstate.get_user(old_driver['id'])
-        passenger =  cstate.get_user(old_passenger['id'])
         if act == 'add':
-            driver.add_passenger(passenger)
+            old_driver, old_passenger = action[1:]
+            driver = new_state.get_driver(old_driver.user['id'])
+            passenger = new_state.get_user(old_passenger['id'])
+            new_state.add_passenger_to_driver(passenger,driver)
+        elif act == 'swap':
+            old_driver1, old_driver2 = action[1:]
+            driver1 = new_state.get_driver(old_driver1.user['id'])
+            driver2 = new_state.get_driver(old_driver2.user['id'])
+            new_state.swap_best_passengers(driver1, driver2)
+        elif act == 'driver_as_passenger':
+            old_driver, old_driver_as_passenger = action[1:]
+            driver = new_state.get_driver(old_driver.user['id'])
+            driver_as_passenger = new_state.get_driver(old_driver_as_passenger.user['id'])
+            new_state.add_driver_as_passenger(driver, driver_as_passenger)
 
-
-        return cstate
+        return new_state
 
     def value(self, state):
         # print(state.global_distance())
-        return state.N * 30 - state.global_distance()
+        return state.N * 300 - state.global_distance()
 
     def actions(self, state):
+        actions = self.generate_add_actions(state)
+        if len(state.actual_drivers) > 1:
+            actions.extend(self.generate_swap_actions(state))
+        if not state.remaining_passengers and state.remaining_drivers:
+            actions.extend(self.generate_driver_as_passenger_actions(state))
+
+        print(actions)
+        return actions
+
+    def generate_add_actions(self, state):
         actions = []
         for d, p in product(state.drivers, state.remaining_passengers):
             actions.append(['add',d,p])
+        return actions
 
+    def generate_swap_actions(self, state):
+        actions = []
+        pairs_of_drivers = [[d1, d2] for d1, d2 in product(state.actual_drivers, repeat=2) if d1 != d2]
+        for d1, d2 in pairs_of_drivers:
+            actions.append(['swap',d1,d2])
+        return actions
+
+    def generate_driver_as_passenger_actions(self, state):
+        actions = []
+        pairs_of_drivers = [[d, p] for d, p in product(state.drivers, state.remaining_drivers) if d != p]
+        for d, p in pairs_of_drivers:
+            actions.append(['driver_as_passenger', d, p])
         return actions
 
 
@@ -65,6 +89,7 @@ class State:
         self.actual_drivers = []
         self.remaining_drivers = []
         self.remaining_passengers = []
+        self.drivers_index = [None] * self.N
 
     def generate_random_problem (self):
         self.__generate_users()
@@ -86,11 +111,15 @@ class State:
                 self.passengers.append(self.users[i])
             else:
                 self.drivers.append(Driver(self.users[i]))
+                self.drivers_index[i] = self.drivers[-1]
         self.remaining_passengers = list(self.passengers)
         self.remaining_drivers = list(self.drivers)
 
-    def get_user(self, pos):
-        return self.users[pos]
+    def get_user(self, id):
+        return self.users[id]
+
+    def get_driver(self, id):
+        return self.drivers_index[id]
 
     def is_final_state(self):
         return not self.remaining_passengers
@@ -107,8 +136,7 @@ class State:
             dist += d.distance()
             counted_driver.append(d)
 
-        for u in self.remaining_passengers:
-            dist += manhattan_distance(u['origin'], u['destination'])
+        dist += 300 * len(self.remaining_passengers)
 
         return dist
 
@@ -173,7 +201,7 @@ class State:
                 added_passengers.append(p)
         return added_passengers
 
-    def swap_passengers(self, driver1, driver2):
+    def swap_best_passengers(self, driver1, driver2):
         old_distance = driver1.distance() + driver2.distance()
         min_dist = {'dist': old_distance, 'passenger_d1': None, 'passenger_d2': None}
         for p1, p2 in product(driver1.get_passengers(), driver2.get_passengers()):
@@ -210,7 +238,7 @@ class State:
             old_distance = d1.distance() + d2.distance()
             cd1 = copy.deepcopy(d1)
             cd2 = copy.deepcopy(d2)
-            passengers = self.swap_passengers(cd1, cd2)
+            passengers = self.swap_best_passengers(cd1, cd2)
             if passengers:
                 saved_distance = old_distance - (cd1.distance() + cd2.distance())
                 if saved_distance > max_saved_distance['dist']:
@@ -219,9 +247,17 @@ class State:
                     max_saved_distance['passengers'] = passengers
 
         if max_saved_distance['dist'] > 0:
-            passengers = self.swap_passengers(max_saved_distance['drivers'][0], max_saved_distance['drivers'][1])
+            passengers = self.swap_best_passengers(max_saved_distance['drivers'][0], max_saved_distance['drivers'][1])
             return [max_saved_distance['drivers'], max_saved_distance['passengers']]
         return []
+
+    def add_passenger_to_driver(self, passenger, driver):
+        added = driver.add_passenger(passenger)
+        if added:
+            self.remaining_passengers.remove(passenger)
+            if driver not in self.actual_drivers:
+                self.actual_drivers.append(driver)
+                self.remaining_drivers.remove(driver)
 
     def add_best_passenger(self, alow_worsen=False):
         print("AAAAAAAAAAAAAAAAADDDDDDDDDDDDDDDIIIIIIIIIIIIIIINNNNNNNNNNNNNNNNNGGGGGGGGGGGG")
@@ -244,6 +280,14 @@ class State:
             self.remaining_passengers.remove(max_saved_distance['passenger'])
             return True
         return False
+
+    def add_driver_as_passenger(self, driver, driver_as_passenger):
+        added = driver.add_passenger(driver_as_passenger.user)
+        if added:
+            self.remaining_drivers.remove(driver_as_passenger)
+            if driver not in self.actual_drivers:
+                self.actual_drivers.append(driver)
+                self.remaining_drivers.remove(driver)
 
     def add_best_driver_as_passenger(self):
         passenger_candidates = list(self.remaining_drivers)
@@ -379,7 +423,6 @@ class Driver:
                 return True
             return False
 
-
     def add_passenger_in_pos(self, passenger, pos_take, pos_drop):
         # insert first the take operation ant then the pop one
         self.travel.insert(pos_take, {'op': TravelOp.TAKE, 'passenger': passenger})
@@ -421,115 +464,16 @@ class Driver:
         return pos
 
 
-# state = State(n=10, m=1)
-# state.generate_random_problem()
-# state.generate_initial_random_solution()
-# print(state.remaining_passengers)
-# print(state.remaining_drivers)
-# print([d.user['id'] for d in state.actual_drivers])
-# for d in state.actual_drivers:
-#     print(d.travel)
-
-# print("user: " + str(state.users[0]))
-# print("user: " + str(state.users[1]))
-# print("user: " + str(state.users[2]))
-# print("user: " + str(state.users[3]))
-# driver = Driver(state.users[0])
-# driver.add_passenger(state.users[1])
-# driver.add_passenger(state.users[2])
-# print(driver.travel)
-# driver.add_passenger(state.users[3])
-# print(driver.travel)
-# print(driver.distance())
-
-# print()
-# print()
-
-state = State(n=100, m=50)
+state = State(n=10, m=5)
 state.generate_random_problem()
 
-# print(state.global_distance())
-# state.add_best_passenger()
-# print(state.global_distance())
-#
-
-# state.generate_initial_random_solution()
-
-# print(state.is_final_state())
-# print(state.global_distance())
-#
-# co2 = CO2(state)
-#
-# final = search.hill_climbing(co2)
-#
-# print(final.is_final_state())
-# print(final.global_distance())
-
-
-
-print("global distance: ")
 print(state.global_distance())
-cont = True
-old_dist = state.global_distance()
-while state.remaining_passengers:
-    #state.best_swap()
-    print('add passenger')
-    print(state.add_best_passenger(alow_worsen=True))
-    dist = state.global_distance()
-    cont = old_dist > dist
-    old_dist = dist
-    print("global distance: ")
-    print(dist)
-    if not cont:
-        print("hhhhhhhhhheeeeeeeeyyyyyyy")
 
-cont = True
-while len(state.remaining_drivers) > 1 and cont:
-    print('add driver')
-    state.add_best_driver_as_passenger()
-    dist = state.global_distance()
-    cont = old_dist > dist
-    old_dist = dist
-    print("global distance: ")
-    print(dist)
+hc = CO2(state)
 
-cont = True
-while cont:
-    print('swap')
-    state.best_swap()
-    dist = state.global_distance()
-    cont = old_dist > dist
-    old_dist = dist
-    print("global distance: ")
-    print(dist)
+print(hc.value(state))
 
+final = search.hill_climbing(hc)
 
-"""
-print(state.drivers[0].travel)
-print(state.drivers[1].travel)
-sw = state.swap_passengers(state.drivers[0], state.drivers[1])
-if sw:
-    print("Swapped -----")
-    print(state.drivers[0].travel)
-    print(state.drivers[1].travel)
-
-"""
-
-"""print(random.choices(range(34),k=2))
-
-for i in range(10):
-    my_randoms=[random.randrange(100) for _ in range (2)]
-    print(my_randoms)
-
-sequence = range(30)
-users = []
-for i in range(10):
-    user = {}
-    user['id'] = i
-    user['origin'] = random.choices(sequence,k=2)
-    user['destination'] = random.choices(sequence,k=2)
-    print(user)
-    users.append(user)
-
-print(users)
-"""
+print(final.global_distance())
+print(hc.value(final))
