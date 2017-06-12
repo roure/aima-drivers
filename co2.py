@@ -47,16 +47,16 @@ class CO2(search.Problem):
         return state.N * 300 - state.global_distance()
 
     def actions(self, state):
-        actions = self.generate_add_actions(state)
+        actions = self.generate_add_passenger_actions(state)
         if len(state.actual_drivers) > 1:
             actions.extend(self.generate_swap_actions(state))
-        if not state.remaining_passengers and state.remaining_drivers:
+        if not state.remaining_passengers and state.drivers_with_no_passengers:
             actions.extend(self.generate_driver_as_passenger_actions(state))
 
-        print(actions)
+        # print(actions)
         return actions
 
-    def generate_add_actions(self, state):
+    def generate_add_passenger_actions(self, state):
         actions = []
         for d, p in product(state.drivers, state.remaining_passengers):
             actions.append(['add',d,p])
@@ -64,14 +64,15 @@ class CO2(search.Problem):
 
     def generate_swap_actions(self, state):
         actions = []
-        pairs_of_drivers = [[d1, d2] for d1, d2 in product(state.actual_drivers, repeat=2) if d1 != d2]
+        pairs_of_drivers = [[d1, d2] for d1, d2 in product(state.actual_drivers, repeat=2) if d1 != d2 and \
+                            d1 not in state.drivers_with_no_passengers and d2 not in state.drivers_with_no_passengers]
         for d1, d2 in pairs_of_drivers:
             actions.append(['swap',d1,d2])
         return actions
 
     def generate_driver_as_passenger_actions(self, state):
         actions = []
-        pairs_of_drivers = [[d, p] for d, p in product(state.drivers, state.remaining_drivers) if d != p]
+        pairs_of_drivers = [[d, p] for d, p in product(state.actual_drivers, state.drivers_with_no_passengers) if d != p]
         for d, p in pairs_of_drivers:
             actions.append(['driver_as_passenger', d, p])
         return actions
@@ -87,7 +88,7 @@ class State:
         self.passengers = []
         self.drivers = []
         self.actual_drivers = []
-        self.remaining_drivers = []
+        self.drivers_with_no_passengers = []
         self.remaining_passengers = []
         self.drivers_index = [None] * self.N
 
@@ -113,7 +114,8 @@ class State:
                 self.drivers.append(Driver(self.users[i]))
                 self.drivers_index[i] = self.drivers[-1]
         self.remaining_passengers = list(self.passengers)
-        self.remaining_drivers = list(self.drivers)
+        self.drivers_with_no_passengers = list(self.drivers)
+        self.actual_drivers = list(self.drivers)
 
     def get_user(self, id):
         return self.users[id]
@@ -126,80 +128,12 @@ class State:
 
     def global_distance(self):
         dist = 0
-        counted_driver = []
         for d in self.actual_drivers:
             dist += d.distance()
-            counted_driver.append(d)
 
-        rd = [d for d in self.remaining_drivers if d not in counted_driver]
-        for d in rd:
-            dist += d.distance()
-            counted_driver.append(d)
-
-        dist += 300 * len(self.remaining_passengers)
+        dist += self.MAX_DRIVE_DISTANCE * len(self.remaining_passengers)
 
         return dist
-
-    def generate_initial_random_solution(self):
-        self.take_all_passengers_possible()
-        self.take_empty_drivers_as_passenger()
-
-    def take_all_passengers_possible(self):
-        last_driver_idx = 0
-        for driver in self.drivers:
-            added_passengers = self.__take_passengers(driver)
-            if added_passengers:
-                self.actual_drivers.append(driver)
-                self.remaining_drivers.remove(driver)
-            self.remaining_passengers = [d for d in self.remaining_passengers if d not in added_passengers]
-            if len(self.remaining_passengers) == 0:
-                break
-            last_driver_idx += 1
-        self.remaining_drivers.insert(0,self.drivers[last_driver_idx]) # last driver may still have room
-        return last_driver_idx
-
-    def __take_passengers(self, driver):
-        added_passengers = []
-        for p in self.remaining_passengers:
-            added = driver.add_passenger(p)
-            if added:
-                added_passengers.append(p)
-        return added_passengers
-
-    def take_empty_drivers_as_passenger(self):
-        if len(self.remaining_drivers) < 2:
-            return
-        tried_driver = []
-        passenger_candidates = [d for d in self.remaining_drivers[1:] if d not in self.actual_drivers]
-        driver = self.remaining_drivers.pop()
-        while passenger_candidates and driver not in tried_driver:
-            tried_driver.append(driver)
-            added_drivers_as_passengers = self.__take_drivers_as_passenger(driver, passenger_candidates)
-            if added_drivers_as_passengers:
-                self.remaining_drivers = [d for d in self.remaining_drivers if d not in added_drivers_as_passengers]
-                if driver not in self.actual_drivers:
-                    self.actual_drivers.append(driver)  # driver may drive on his own
-            else:
-                self.remaining_drivers.append(driver)  # may go as a passenger of another driver
-
-            if len(self.remaining_drivers) > 1:
-                passenger_candidates = [d for d in self.remaining_drivers[1:] if d not in self.actual_drivers]
-                driver = self.remaining_drivers.pop(0)
-            else:
-                passenger_candidates = []
-
-        # drivers going on their own
-        self.actual_drivers.extend(self.remaining_drivers)
-        print('drivers on their own {}'.format([d.user for d in self.remaining_drivers]))
-        self.remaining_drivers = []
-
-    def __take_drivers_as_passenger(self, driver, remaining_drivers):
-        added_passengers = []
-        for p in remaining_drivers:
-            added = driver.add_passenger(p.user, mandatory=False) # take driver as passenger only if dist is reduced
-            if added:
-                added_passengers.append(p)
-        return added_passengers
 
     def swap_best_passengers(self, driver1, driver2):
         old_distance = driver1.distance() + driver2.distance()
@@ -230,93 +164,26 @@ class State:
             return [p1,p2]
         return []
 
-    def best_swap(self):
-        print("SSSSSSSSSSSSSSSWWWWWWWWWWAAAAAAAAAAAPPPPPPPPPPIIIIIIIIIIIINNNNNNNNGGGGGGG")
-        max_saved_distance = {'dist': 0, 'drivers': [], 'passengers': []}
-        pairs_of_drivers = [[d1, d2] for d1, d2 in product(self.actual_drivers, repeat=2) if d1 != d2]
-        for d1, d2 in pairs_of_drivers:
-            old_distance = d1.distance() + d2.distance()
-            cd1 = copy.deepcopy(d1)
-            cd2 = copy.deepcopy(d2)
-            passengers = self.swap_best_passengers(cd1, cd2)
-            if passengers:
-                saved_distance = old_distance - (cd1.distance() + cd2.distance())
-                if saved_distance > max_saved_distance['dist']:
-                    max_saved_distance['dist'] = saved_distance
-                    max_saved_distance['drivers'] = [d1,d2]
-                    max_saved_distance['passengers'] = passengers
-
-        if max_saved_distance['dist'] > 0:
-            passengers = self.swap_best_passengers(max_saved_distance['drivers'][0], max_saved_distance['drivers'][1])
-            return [max_saved_distance['drivers'], max_saved_distance['passengers']]
-        return []
-
     def add_passenger_to_driver(self, passenger, driver):
         added = driver.add_passenger(passenger)
         if added:
             self.remaining_passengers.remove(passenger)
-            if driver not in self.actual_drivers:
-                self.actual_drivers.append(driver)
-                self.remaining_drivers.remove(driver)
-
-    def add_best_passenger(self, alow_worsen=False):
-        print("AAAAAAAAAAAAAAAAADDDDDDDDDDDDDDDIIIIIIIIIIIIIIINNNNNNNNNNNNNNNNNGGGGGGGGGGGG")
-        max_saved_distance = {'dist': -300, 'driver': None, 'passenger': None}
-        for d, p in product(self.drivers, self.remaining_passengers):
-            old_distance = d.distance() + manhattan_distance(p['origin'], p['destination'])
-            cd = copy.deepcopy(d)
-            added = cd.add_passenger(p)
-            if added:
-                saved_distance = old_distance - cd.distance()
-                if saved_distance > max_saved_distance['dist']:
-                    max_saved_distance['dist'] = saved_distance
-                    max_saved_distance['driver'] = d
-                    max_saved_distance['passenger'] = p
-        if alow_worsen or max_saved_distance['dist'] > 0:
-            max_saved_distance['driver'].add_passenger(max_saved_distance['passenger'])
-            if max_saved_distance['driver'] not in self.actual_drivers:
-                self.actual_drivers.append(max_saved_distance['driver'])
-                self.remaining_drivers.remove(max_saved_distance['driver'])
-            self.remaining_passengers.remove(max_saved_distance['passenger'])
-            return True
-        return False
+            if driver in self.drivers_with_no_passengers:
+                self.drivers_with_no_passengers.remove(driver)
 
     def add_driver_as_passenger(self, driver, driver_as_passenger):
         added = driver.add_passenger(driver_as_passenger.user)
         if added:
-            self.remaining_drivers.remove(driver_as_passenger)
-            if driver not in self.actual_drivers:
-                self.actual_drivers.append(driver)
-                self.remaining_drivers.remove(driver)
+            self.drivers_with_no_passengers.remove(driver_as_passenger)
+            self.actual_drivers.remove(driver_as_passenger)
+            if driver in self.drivers_with_no_passengers:
+                self.drivers_with_no_passengers.remove(driver)
 
-    def add_best_driver_as_passenger(self):
-        passenger_candidates = list(self.remaining_drivers)
-        max_saved_distance = {'dist': 0, 'driver': None, 'passenger': None}
-        for p in passenger_candidates:
-            drivers = [d for d in self.drivers if d is not p]
-            for d in drivers:
-                old_distance = d.distance() + p.distance()
-                cd = copy.deepcopy(d)
-                added = cd.add_passenger(p.user, mandatory=False)
-                if added:
-                    saved_distance = old_distance - cd.distance()
-                    if saved_distance > max_saved_distance['dist']:
-                        max_saved_distance['dist'] = saved_distance
-                        max_saved_distance['driver'] = d
-                        max_saved_distance['passenger'] = p
-        if max_saved_distance['dist'] > 0:
-            max_saved_distance['driver'].add_passenger(max_saved_distance['passenger'].user, mandatory=False)
-            if max_saved_distance['driver'] not in self.actual_drivers:
-                self.actual_drivers.append(max_saved_distance['driver'])
-                if max_saved_distance['driver'] in self.remaining_drivers:
-                    self.remaining_drivers.remove(max_saved_distance['driver'])
-            self.remaining_drivers.remove(max_saved_distance['passenger'])
-            return True
-        return False
-
-    # bad passenger: one that worsen the overall distance
-    # def take_bad_passengers(self):
-
+    def __str__(self):
+        s = "Actual drivers: \n"
+        for d in self.actual_drivers:
+            s += d.__str__() + "\n"
+        return s
 
 
 class TravelOp(Enum):
@@ -377,7 +244,7 @@ class Driver:
             return True
 
     # mandatory or not
-    def add_passenger_aux(self, passenger):
+    def add_passenger(self, passenger):
         added = False
         if not self.travel:
             self.travel.insert(0, {'op': TravelOp.TAKE, 'passenger': passenger})
@@ -408,23 +275,8 @@ class Driver:
         assert(not self.is_over_occupied())
         return added
 
-    # taking a driver as a passenger may not be worth if increments traveled distance
-    def add_passenger(self, passenger, mandatory=True):
-        if mandatory:
-            added = self.add_passenger_aux(passenger)
-            return added
-        else:
-            dist_old = self.distance() + manhattan_distance(passenger['origin'], passenger['destination'])
-            driver = copy.deepcopy(self)
-            added = driver.add_passenger_aux(passenger)
-            dist_new = driver.distance()
-            if dist_old > dist_new and added:
-                self.add_passenger_aux(passenger)
-                return True
-            return False
-
     def add_passenger_in_pos(self, passenger, pos_take, pos_drop):
-        # insert first the take operation ant then the pop one
+        # insert first the take operation and then the drop one
         self.travel.insert(pos_take, {'op': TravelOp.TAKE, 'passenger': passenger})
         self.travel.insert(pos_drop, {'op': TravelOp.DROP, 'passenger': passenger})
         assert(not self.is_over_occupied())
@@ -463,17 +315,29 @@ class Driver:
         assert(len(pos) == 2 or not pos)
         return pos
 
+    def __str__(self):
+        return 'driver: {} Route: {}'.format(self.user['id'], self.travel)
 
-state = State(n=10, m=5)
+"""
+This is going to call the Hill Climbing algorithm
+"""
+
+state = State(n=100, m=50)
 state.generate_random_problem()
 
-print(state.global_distance())
+print('Initial global distance: {}'.format(state.global_distance()))
 
 hc = CO2(state)
 
-print(hc.value(state))
+print('Initial value: {}'.format(hc.value(state)))
+print()
 
 final = search.hill_climbing(hc)
 
-print(final.global_distance())
-print(hc.value(final))
+print()
+print('Final global distance: {}'.format(final.global_distance()))
+print('Final value: {}'.format(hc.value(final)))
+
+print()
+print("Final state:")
+print(final)

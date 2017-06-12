@@ -370,6 +370,7 @@ def hill_climbing(problem):
         if problem.value(neighbor.state) <= problem.value(current.state):
             break
         current = neighbor
+        print('.', end='', flush=True)
     return current.state
 
 
